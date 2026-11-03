@@ -8,16 +8,54 @@
  const b64=x=>btoa(String.fromCharCode(...new Uint8Array(x))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
  const random=()=>b64(crypto.getRandomValues(new Uint8Array(32)));
  const endpoint=(tenant,path)=>`https://login.microsoftonline.com/${encodeURIComponent(tenant||'organizations')}/oauth2/v2.0/${path}`;
- function conf(){const stored=JSON.parse(localStorage.getItem('crv3_public_auth_config')||'{}');return {...siteDefault,...stored};}
+ function conf(){
+  let saved={};
+  try{saved=JSON.parse(localStorage.getItem('crv3_public_auth_config')||'{}')||{};}catch{}
+  return {...siteDefault,...saved};
+ }
+ // Accept only a direct, site-relative XLSX URL. The link stays in this browser,
+ // never in the public Git repository or deployed config file.
+ function workbookLocation(input){
+  let url;
+  try{url=new URL(String(input||'').trim());}
+  catch{throw new Error('Masukkan URL Excel SharePoint yang lengkap (https://...).');}
+  if(url.protocol!=='https:'||!/^[a-z0-9-]+\.sharepoint\.com$/i.test(url.hostname))
+   throw new Error('URL harus berasal dari SharePoint Online (https://...sharepoint.com).');
+  let segments;
+  try{segments=url.pathname.replace(/^\/:x:\/r(?=\/)/i,'').split('/').filter(Boolean).map(decodeURIComponent);}
+  catch{throw new Error('URL Excel mengandung encoding yang tidak valid.');}
+  if(!/^(sites|teams)$/i.test(segments[0]||'')||segments.length<5||!/^.+\.xlsx$/i.test(segments.at(-1)))
+   throw new Error('Gunakan link langsung file XLSX dengan path /sites/.../Shared Documents/...xlsx, bukan Doc.aspx atau sharing token.');
+  const [type,site,library,...remaining]=segments;
+  if(!site||!library||!remaining.length||remaining.some(x=>x==='..'||x==='.')||site.includes(':'))
+   throw new Error('Struktur lokasi SharePoint pada link tidak valid.');
+  return {
+   siteHost:url.hostname,
+   sitePath:'/'+type+'/'+site,
+   preferredLibrary:library.toLowerCase()==='shared documents'?'Documents':library,
+   workbookPath:remaining.join('/'),
+   sourceUrl:url.origin+url.pathname
+  };
+ }
  function uri(){return location.origin+location.pathname;}
  const cleanQuery=()=>{if(location.search.includes('code=')||location.search.includes('error=')) history.replaceState({},'',uri()+location.hash);};
  class GraphClient{
   constructor(){this.token=null;this.expiresAt=0;this.workbook=null;this.isActive=false;this.lastSync=null;}
   config(){return conf();}
-  configured(){return Boolean(conf().clientId && /^[0-9a-f-]{32,36}$/i.test(conf().clientId));}
-  saveConfig(clientId,tenantId){localStorage.setItem('crv3_public_auth_config',JSON.stringify({clientId:String(clientId||'').trim(),tenantId:String(tenantId||'organizations').trim()}));}
+  configured(){
+   const c=conf();
+   return Boolean(c.clientId && /^[0-9a-f-]{32,36}$/i.test(c.clientId) && c.siteHost && c.sitePath && c.workbookPath);
+  }
+  saveConfig(clientId,tenantId,workbookUrl){
+   const id=String(clientId||'').trim(),tenant=String(tenantId||'organizations').trim();
+   if(!/^[0-9a-f-]{32,36}$/i.test(id))throw new Error('Application (client) ID harus berupa UUID dari Microsoft Entra.');
+   if(!/^[a-z0-9.-]+$/i.test(tenant))throw new Error('Tenant ID / domain Microsoft tidak valid.');
+   const location=workbookLocation(workbookUrl);
+   this.disconnect();
+   localStorage.setItem('crv3_public_auth_config',JSON.stringify({clientId:id,tenantId:tenant,...location}));
+  }
   async signIn(){
-   if(!this.configured())throw new Error('Application (client) ID belum dikonfigurasi oleh organisasi.');
+   if(!this.configured())throw new Error('Isi Client ID, Tenant, dan URL workbook SharePoint dahulu.');
    if(!crypto?.subtle)throw new Error('Login Microsoft membutuhkan HTTPS atau localhost.');
    const verifier=random()+random();const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier));const state=random();
    sessionStorage.setItem(store+'verifier',verifier);sessionStorage.setItem(store+'state',state);
@@ -51,6 +89,7 @@
   async resolveWorkbook(){
    if(this.workbook)return this.workbook;
    const c=conf();
+   if(!c.siteHost||!c.sitePath||!c.workbookPath)throw new Error('Lokasi workbook SharePoint belum dikonfigurasi.');
    const site=await this.request('GET',`/sites/${encodeURIComponent(c.siteHost)}:${c.sitePath}`);
    const drives=await this.request('GET',`/sites/${encodeURIComponent(site.id)}/drives`);
    const list=[...(drives.value||[])].sort((a,b)=>(a.name===c.preferredLibrary?-1:0)-(b.name===c.preferredLibrary?-1:0));
