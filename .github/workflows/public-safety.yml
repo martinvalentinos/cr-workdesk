@@ -1,0 +1,40 @@
+name: Public repository safety checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  no-sensitive-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject common data exports and credential files
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re
+          import subprocess
+          import sys
+
+          paths = subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0")
+          patterns = [
+              r"(?i)\.(xlsx?|xlsm|csv|tsv|ods|sqlite3?|db)$",
+              r"(?i)(^|/)\.env(?:\..+)?$",
+              r"(?i)\.(pem|p12|pfx|key)$",
+              r"(?i)(^|/)data\.json$",
+              r"(?i)(^|/)dist/data\.js$",
+              r"(?i)snapshot.*\.json$",
+              r"(?i)credentials\.json$",
+          ]
+          bad = [p for p in paths if p and any(re.search(pattern, p) for pattern in patterns)]
+          if bad:
+              print("Blocked files that may contain sensitive data:")
+              for path in bad:
+                  print(" -", path)
+              sys.exit(1)
+          print("No blocked filenames found. This does not guarantee source content is safe.")
+          PY
