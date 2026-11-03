@@ -1,10 +1,22 @@
 import vm from 'node:vm';import {readFileSync} from 'node:fs';import assert from 'node:assert/strict';
 const read=x=>readFileSync(new URL('../dist/'+x,import.meta.url),'utf8');
-const storage={getItem:()=>null,setItem:()=>{},removeItem:()=>{}};
+const memory=new Map();const storage={getItem:k=>memory.get(k)??null,setItem:(k,v)=>memory.set(k,String(v)),removeItem:k=>memory.delete(k)};
 const w={CR_CONFIG:{clientId:'00000000-0000-0000-0000-000000000001',tenantId:'organizations',siteHost:'contoso.sharepoint.com',sitePath:'/sites/SampleSite',preferredLibrary:'Documents',workbookPath:'Demo/Test CR.xlsx'}};
-const c={window:w,localStorage:storage,sessionStorage:storage,location:{origin:'https://example.com',pathname:'/'},crypto:globalThis.crypto,TextEncoder,URLSearchParams,btoa,Date,Math,Number,JSON,encodeURIComponent};vm.createContext(c);
+const c={window:w,localStorage:storage,sessionStorage:storage,location:{origin:'https://example.com',pathname:'/'},crypto:globalThis.crypto,TextEncoder,URL,URLSearchParams,btoa,Date,Math,Number,JSON,encodeURIComponent};vm.createContext(c);
 vm.runInContext(read('assets/data-model.js'),c);vm.runInContext(read('assets/graph.js'),c);
-const g=new w.CRGraph.GraphClient();g.token='fake-test-only';g.expiresAt=Date.now()+1e7;
+const g=new w.CRGraph.GraphClient();
+const directUrl='https://contoso.sharepoint.com/:x:/r/sites/SampleSite/Shared%20Documents/Demo/Test%20CR.xlsx?web=1&d=private-value';
+g.saveConfig('00000000-0000-0000-0000-000000000001','organizations',directUrl);
+const config=g.config();
+assert.equal(config.siteHost,'contoso.sharepoint.com');
+assert.equal(config.sitePath,'/sites/SampleSite');
+assert.equal(config.preferredLibrary,'Documents');
+assert.equal(config.workbookPath,'Demo/Test CR.xlsx');
+assert.equal(config.sourceUrl,'https://contoso.sharepoint.com/:x:/r/sites/SampleSite/Shared%20Documents/Demo/Test%20CR.xlsx');
+assert.equal(g.configured(),true);
+assert.throws(()=>g.saveConfig(config.clientId,config.tenantId,'https://contoso.sharepoint.com/:x:/r/sites/SampleSite/_layouts/15/Doc.aspx?file=Test.xlsx'),/link langsung/);
+assert.equal(g.config().workbookPath,'Demo/Test CR.xlsx');
+g.token='fake-test-only';g.expiresAt=Date.now()+1e7;
 const rows=[[''],['No','CR ID','Description','Status','%','Estimasi BAST','Last Update','Action Needed'],[1,'CR001','Project A','CLOSED',.5,null,'Update lama','Tindak lanjut lama']];
 let patches=[];let remoteChange=false;
 g.request=async(method,path,data)=>{
