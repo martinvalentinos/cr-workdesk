@@ -3,9 +3,7 @@
  const $=id=>document.getElementById(id),M=window.CRModel,Graph=window.CRGraph,O=window.CROps,UX=window.CRUX;
  const SNAP=window.CR_WORKBOOK_SNAPSHOT;
  const HAS_SNAPSHOT=Boolean(SNAP?.records?.length);
- const SOURCE=window.CR_CONFIG?.sourceUrl || ($('sourceLink').getAttribute('href') === '#' ? '' : $('sourceLink').href);
- if(SOURCE)$('sourceLink').href=SOURCE;
- if(!SOURCE){$('sourceLink').setAttribute('aria-disabled','true');$('sourceLink').addEventListener('click',e=>e.preventDefault());}
+ const SOURCE=()=>state.graph.config().sourceUrl||window.CR_CONFIG?.sourceUrl||'';
  const KEYS=['status','progress','action','note','month','yearRekon','dueDate'];
  const safeLoad=()=>{try{return JSON.parse(localStorage.getItem('crv3_local_drafts')||'{}')}catch{return {}}};
  const state={page:'overview',sheet:'CR Ultimate',segment:'',year:'',status:'',recon:'',query:'',metric:'',number:1,pageSize:18,mode:'snapshot',records:SNAP.records,importedAt:null,drafts:safeLoad(),opening:null,lastFocus:null,graph:new Graph.GraphClient(),busy:false,syncError:null};
@@ -141,8 +139,10 @@
   document.querySelectorAll('.nav-item').forEach(n=>{const active=n.dataset.nav===state.page;n.classList.toggle('active',active);n.setAttribute('aria-current',active?'page':'false')});
  }
  function renderConnection(){
+  const source=SOURCE(),sourceLink=$('sourceLink');
+  sourceLink.href=source||'#';sourceLink.setAttribute('aria-disabled',String(!source));
   const sourceLocation=$('settingsDialog').querySelector('.settings-row a');
-  if(sourceLocation&&SOURCE){sourceLocation.href=SOURCE;sourceLocation.textContent='Buka Excel SharePoint ↗';}
+  if(sourceLocation){sourceLocation.href=source||'#';sourceLocation.textContent=source?'Buka Excel SharePoint ↗':'Lokasi workbook belum dikonfigurasi ↗';}
   const manual=state.mode==='manual',connected=state.graph.connected(),last=state.graph.lastSync,failed=Boolean(state.syncError),stale=state.mode==='live'&&(failed||!connected||!last||Date.now()-last.getTime()>Math.max(2.5*Number(state.graph.config().refreshSeconds||60)*1000,180000)),live=state.mode==='live'&&!stale,pending=state.busy;
   $('syncState').className='sync-state '+(live?'live':stale||failed?'error':manual?'manual':'');$('syncState').querySelector('span').textContent=pending?'Menyinkronkan…':live?'Live · Excel Online':failed?'Sinkronisasi gagal':stale?'Data lama · sinkron terhenti':manual?'Manual · Excel lokal':HAS_SNAPSHOT?'Snapshot · offline':'Belum ada data · koneksi diperlukan';
   $('sidebarMode').textContent=live?'Excel live':stale?'Data terakhir tersimpan':manual?'Excel impor manual':'Snapshot lokal';$('sidebarDetail').textContent=live?'Sinkron berkala saat terbuka':stale?'Perlu autentikasi atau refresh':manual?'Data hanya tersedia di tab ini':HAS_SNAPSHOT?'Belum terhubung ke workbook':'Sambungkan Microsoft untuk melihat data';
@@ -177,7 +177,7 @@
   [['editStatus','status'],['editProgress','progress'],['editAction','action'],['editNote','note'],['editMonth','month'],['editYearRekon','yearRekon'],['editDueDate','dueDate']].forEach(([id,field])=>$(id).closest('label').hidden=f[field]===undefined);
   $('drawerNotice').className='drawer-notice '+(state.mode==='live'?'live':'');
   $('drawerNotice').textContent=state.mode==='live'?'Kolom sumber akan diperbarui lewat Graph setelah pengecekan konflik. Status rekon manual, override Tahun CR, dan link dokumen tetap anotasi lokal.':state.mode==='manual'?'Mode manual: draft hanya disimpan di tab ini. Ekspor CSV sebelum menutup tab. Excel SharePoint tidak berubah.':'Mode snapshot: seluruh perubahan tersimpan sebagai draft lokal. Excel SharePoint tidak ikut berubah.';
-  $('drawerExcelLink').href=SOURCE||'#';$('drawerExcelLink').hidden=!SOURCE;const doc=$('drawerDocLink');doc.hidden=!/^https:\/\//i.test(rec.docLink||'');if(!doc.hidden)doc.href=rec.docLink;
+  $('drawerExcelLink').href=SOURCE()||'#';$('drawerExcelLink').hidden=!SOURCE();const doc=$('drawerDocLink');doc.hidden=!/^https:\/\//i.test(rec.docLink||'');if(!doc.hidden)doc.href=rec.docLink;
   $('drawerScrim').hidden=false;$('detailDrawer').hidden=false;document.body.style.overflow='hidden';
   $('closeDrawer').focus();
  }
@@ -266,13 +266,13 @@
   finally{$('workbookFile').value='';}
  }
  function openSettings(){state.lastFocus=document.activeElement;
-  const c=state.graph.config();$('clientId').value=c.clientId||'';$('tenantId').value=c.tenantId||'organizations';$('settingsError').hidden=true;
+  const c=state.graph.config();$('clientId').value=c.clientId||'';$('tenantId').value=c.tenantId||'organizations';$('workbookUrl').value=c.sourceUrl||'';$('redirectUri').textContent=location.origin+location.pathname;$('settingsError').hidden=true;
   $('settingsScrim').hidden=false;$('settingsDialog').hidden=false;document.body.style.overflow='hidden';renderConnection();$('closeSettings').focus();}
  function closeSettings(){$('settingsDialog').hidden=true;$('settingsScrim').hidden=true;document.body.style.overflow='';state.lastFocus?.focus?.();}
  function errSettings(message){$('settingsError').hidden=false;$('settingsError').textContent=message;}
  async function connect(){
-  state.graph.saveConfig($('clientId').value,$('tenantId').value);
-  try{await state.graph.signIn()}catch(e){errSettings(e.message)}
+  try{state.graph.saveConfig($('clientId').value,$('tenantId').value,$('workbookUrl').value);await state.graph.signIn()}
+  catch(e){errSettings(e.message)}
  }
  async function syncNow(silent=false){
   if(state.busy)return;
@@ -311,6 +311,8 @@
   $('downloadCSV').addEventListener('click',exportCSV);
   $('heroImport').addEventListener('click',()=>$('workbookFile').click());
   $('densityToggle').addEventListener('click',()=>{const compact=!document.body.classList.contains('density-compact');document.body.classList.toggle('density-compact',compact);$('densityToggle').setAttribute('aria-pressed',String(compact));$('densityToggle').textContent=compact?'Comfortable view':'Compact view';});
+  $('sourceLink').addEventListener('click',e=>{if(!SOURCE())e.preventDefault()});
+  $('settingsDialog').querySelector('.settings-row a')?.addEventListener('click',e=>{if(!SOURCE())e.preventDefault()});
   $('copyRedirect').addEventListener('click',async()=>{try{await navigator.clipboard.writeText($('redirectUri').textContent);notice('Redirect URI disalin.','success');}catch{notice('Salin URI secara manual.','error');}});
   $('workbookTrigger').addEventListener('click',()=>$('workbookFile').click());$('workbookSettingsButton').addEventListener('click',()=>$('workbookFile').click());$('workbookFile').addEventListener('change',e=>importWorkbook(e.target.files[0]));
   $('importTrigger').addEventListener('click',()=>$('csvFile').click());$('csvFile').addEventListener('change',e=>importCSV(e.target.files[0]));
@@ -333,7 +335,7 @@
  }
  async function init(){
   if(!SNAP||!M||!Graph){document.body.textContent='CR Workdesk tidak dapat dimuat: file aplikasi tidak lengkap.';return;}
-  UX.init();setupEvents();render();
+  UX.init();setupEvents();$('redirectUri').textContent=location.origin+location.pathname;render();
   try{const wasLogin=await state.graph.handleRedirect();if(wasLogin){notice('Microsoft terautentikasi. Memeriksa workbook…','success');await syncNow();}}
   catch(e){openSettings();errSettings(e.message)}
   setInterval(()=>{if(state.mode==='live'&&state.graph.connected()&&!document.hidden&&!state.busy)syncNow(true);else if(state.mode==='live')renderConnection()},(Number(state.graph.config().refreshSeconds)||60)*1000);
