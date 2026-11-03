@@ -1,0 +1,30 @@
+# Never commit internal CR/workbook data to this public repository.
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.tsv
+*.ods
+*.sqlite
+*.sqlite3
+*.db
+data.json
+dist/data.js
+dist/data.json
+*snapshot*.json
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.key
+*.credentials.json
+
+# Dependencies and local build artifacts
+node_modules/
+.next/
+coverage/
+.DS_Store
